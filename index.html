@@ -310,134 +310,182 @@
   <div id="toast" class="toast"></div>
 
   <script>
-    const scriptURL = "https://script.google.com/macros/s/AKfycbwrC37rw6JyZVdUlCKxu_OPwsYvgFRwEQxv7ODcYg_h-ivFahCtsw9dxR5g3b1ODBesbQ/exec";
-    let originalData = {};
-    const countryFlags = {
-      "US": "https://flagcdn.com/us.svg",
-      "India": "https://flagcdn.com/in.svg",
-      "China": "https://flagcdn.com/cn.svg",
-      "UK": "https://flagcdn.com/gb.svg",
-      "Germany": "https://flagcdn.com/de.svg",
-      "Japan": "https://flagcdn.com/jp.svg",
-      "Other": "https://flagcdn.com/un.svg"
-    };
 
-    async function loadData() {
-      try {
-        const res = await fetch(scriptURL);
-        if (!res.ok) throw new Error("Network error");
-        const data = await res.json();
-        const segments = {};
-        data.forEach(item => {
-          if(item.isApproved == 1) {
-            if(!segments[item.Segment]) segments[item.Segment] = [];
-            segments[item.Segment].push(item);
-          }
-        });
-        originalData = segments;
-        renderSegments(segments);
-      } catch (err) {
-        console.error(err);
-        document.getElementById("error").textContent = "Error loading data.";
+  const scriptURL = "https://script.google.com/macros/s/AKfycbwrC37rw6JyZVdUlCKxu_OPwsYvgFRwEQxv7ODcYg_h-ivFahCtsw9dxR5g3b1ODBesbQ/exec";
+  let originalData = {};
+
+  // Small local map for tricky countries
+  const specialCountryMap = {
+    "US": "US",
+    "United States": "US",
+    "UK": "GB",
+    "United Kingdom": "GB",
+    "South Korea": "KR",
+    "Korea": "KR",
+    "Russia": "RU",
+    "China": "CN"
+  };
+
+  // Cache object to store resolved country codes
+  const countryCache = {};
+
+  async function getCountryCode(countryName) {
+    if (!countryName) return null;
+
+    // Check cache
+    if (countryCache[countryName]) {
+      return countryCache[countryName];
+    }
+
+    // Check local special cases
+    if (specialCountryMap[countryName]) {
+      countryCache[countryName] = specialCountryMap[countryName];
+      return specialCountryMap[countryName];
+    }
+
+    // Fallback → Fetch from REST Countries API
+    try {
+      const res = await fetch(`https://restcountries.com/v3.1/name/${encodeURIComponent(countryName)}?fields=cca2`);
+      if (!res.ok) throw new Error("API error");
+      const data = await res.json();
+      const code = data[0]?.cca2 || null;
+      if (code) {
+        countryCache[countryName] = code;
+        return code;
       }
+    } catch (e) {
+      console.warn("Could not fetch ISO code for", countryName, e);
     }
 
-    function renderSegments(segments) {
-      const container = document.getElementById("segmentsContainer");
-      container.innerHTML = "";
-      Object.keys(segments).forEach(seg => {
-        const segDiv = document.createElement("div");
-        segDiv.className = "segment";
-        const headerDiv = document.createElement("div");
-        headerDiv.className = "segment-header";
-        headerDiv.textContent = `${seg} (${segments[seg].length})`;
-        segDiv.appendChild(headerDiv);
+    return null;
+  }
 
-        const brandsDiv = document.createElement("div");
-        brandsDiv.className = "brands";
+  async function getFlagUrl(countryName) {
+    const code = await getCountryCode(countryName);
+    return code ? `https://flagcdn.com/${code.toLowerCase()}.svg`
+                : "https://flagcdn.com/un.svg"; // fallback
+  }
 
-        segments[seg].forEach(b => {
-          const brandDiv = document.createElement("div");
-          brandDiv.className = "brand-item";
-          const img = document.createElement("img");
-          img.src = countryFlags[b.Country] || countryFlags["Other"];
+  async function loadData() {
+    try {
+      const res = await fetch(scriptURL);
+      if (!res.ok) throw new Error("Network error");
+      const data = await res.json();
+      const segments = {};
+      data.forEach(item => {
+        if(item.isApproved == 1) {
+          if(!segments[item.Segment]) segments[item.Segment] = [];
+          segments[item.Segment].push(item);
+        }
+      });
+      originalData = segments;
+      renderSegments(segments);
+    } catch (err) {
+      console.error(err);
+      document.getElementById("error").textContent = "Error loading data.";
+    }
+  }
+
+  function renderSegments(segments) {
+    const container = document.getElementById("segmentsContainer");
+    container.innerHTML = "";
+    Object.keys(segments).forEach(seg => {
+      const segDiv = document.createElement("div");
+      segDiv.className = "segment";
+      const headerDiv = document.createElement("div");
+      headerDiv.className = "segment-header";
+      headerDiv.textContent = `${seg} (${segments[seg].length})`;
+      segDiv.appendChild(headerDiv);
+
+      const brandsDiv = document.createElement("div");
+      brandsDiv.className = "brands";
+
+      segments[seg].forEach(async (b) => {
+        const brandDiv = document.createElement("div");
+        brandDiv.className = "brand-item";
+        const img = document.createElement("img");
+
+        // 🔹 Use hybrid approach to get flag
+        getFlagUrl(b.Country).then(url => {
+          img.src = url;
           img.alt = b.Country;
-          brandDiv.appendChild(img);
-          brandDiv.appendChild(document.createTextNode(`${b.Brand} (${b.Country})`));
-          if(b.Contributor && b.Contributor.trim().toLowerCase() !== "admin") {
-            const star = document.createElement("span");
-            star.className = "contributor-star";
-            star.textContent = "★";
-            star.setAttribute("data-tooltip", `Contributed by ${b.Contributor}`);
-            // Add mobile tap handler
-            star.addEventListener("click", (e) => {
-              if(window.innerWidth < 768) {
-                e.stopPropagation();
-                showToast(`⭐ Contributed by ${b.Contributor}`);
-              }
-            });
-            brandDiv.appendChild(star);
-          }
-          brandsDiv.appendChild(brandDiv);
         });
 
-        segDiv.appendChild(brandsDiv);
-        segDiv.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const isOpen = brandsDiv.style.maxHeight && brandsDiv.style.maxHeight !== "0px";
-          collapseAllSegments();
-          if(!isOpen) brandsDiv.style.maxHeight = brandsDiv.scrollHeight + "px";
-        });
-        container.appendChild(segDiv);
+        brandDiv.appendChild(img);
+        brandDiv.appendChild(document.createTextNode(`${b.Brand} (${b.Country})`));
+        if(b.Contributor && b.Contributor.trim().toLowerCase() !== "admin") {
+          const star = document.createElement("span");
+          star.className = "contributor-star";
+          star.textContent = "★";
+          star.setAttribute("data-tooltip", `Contributed by ${b.Contributor}`);
+          star.addEventListener("click", (e) => {
+            if(window.innerWidth < 768) {
+              e.stopPropagation();
+              showToast(`⭐ Contributed by ${b.Contributor}`);
+            }
+          });
+          brandDiv.appendChild(star);
+        }
+        brandsDiv.appendChild(brandDiv);
       });
-    }
 
-    function collapseAllSegments() {
-      document.querySelectorAll('.brands').forEach(b => b.style.maxHeight = '0');
-    }
-
-    document.body.addEventListener("click", () => collapseAllSegments());
-
-    document.getElementById("searchInput").addEventListener("input", (e) => {
-      const term = e.target.value.toLowerCase();
-      const filtered = {};
-      Object.keys(originalData).forEach(seg => {
-        const filteredBrands = originalData[seg].filter(b =>
-          seg.toLowerCase().includes(term) || b.Brand.toLowerCase().includes(term)
-        );
-        if (filteredBrands.length > 0) filtered[seg] = filteredBrands;
+      segDiv.appendChild(brandsDiv);
+      segDiv.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isOpen = brandsDiv.style.maxHeight && brandsDiv.style.maxHeight !== "0px";
+        collapseAllSegments();
+        if(!isOpen) brandsDiv.style.maxHeight = brandsDiv.scrollHeight + "px";
       });
-      renderSegments(filtered);
+      container.appendChild(segDiv);
     });
+  }
 
-    const contributeModal = document.getElementById("contributeModal");
-    const contributeBtn = document.getElementById("contributeBtn");
-    const closeContribute = document.getElementById("closeContribute");
-    contributeBtn.onclick = () => contributeModal.style.display = "block";
-    closeContribute.onclick = () => contributeModal.style.display = "none";
+  function collapseAllSegments() {
+    document.querySelectorAll('.brands').forEach(b => b.style.maxHeight = '0');
+  }
 
-    const aboutModal = document.getElementById("aboutModal");
-    const aboutBtn = document.getElementById("aboutBtn");
-    const closeAbout = document.getElementById("closeAbout");
-    aboutBtn.onclick = () => aboutModal.style.display = "block";
-    closeAbout.onclick = () => aboutModal.style.display = "none";
+  document.body.addEventListener("click", () => collapseAllSegments());
 
-    window.onclick = (event) => {
-      if(event.target == contributeModal) contributeModal.style.display = "none";
-      if(event.target == aboutModal) aboutModal.style.display = "none";
-    }
+  document.getElementById("searchInput").addEventListener("input", (e) => {
+    const term = e.target.value.toLowerCase();
+    const filtered = {};
+    Object.keys(originalData).forEach(seg => {
+      const filteredBrands = originalData[seg].filter(b =>
+        seg.toLowerCase().includes(term) || b.Brand.toLowerCase().includes(term)
+      );
+      if (filteredBrands.length > 0) filtered[seg] = filteredBrands;
+    });
+    renderSegments(filtered);
+  });
 
-    // Toast function
-    function showToast(message) {
-      const toast = document.getElementById("toast");
-      toast.textContent = message;
-      toast.className = "toast show";
-      setTimeout(() => {
-        toast.className = "toast";
-      }, 2500);
-    }
+  const contributeModal = document.getElementById("contributeModal");
+  const contributeBtn = document.getElementById("contributeBtn");
+  const closeContribute = document.getElementById("closeContribute");
+  contributeBtn.onclick = () => contributeModal.style.display = "block";
+  closeContribute.onclick = () => contributeModal.style.display = "none";
 
-    loadData();
+  const aboutModal = document.getElementById("aboutModal");
+  const aboutBtn = document.getElementById("aboutBtn");
+  const closeAbout = document.getElementById("closeAbout");
+  aboutBtn.onclick = () => aboutModal.style.display = "block";
+  closeAbout.onclick = () => aboutModal.style.display = "none";
+
+  window.onclick = (event) => {
+    if(event.target == contributeModal) contributeModal.style.display = "none";
+    if(event.target == aboutModal) aboutModal.style.display = "none";
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.className = "toast show";
+    setTimeout(() => {
+      toast.className = "toast";
+    }, 2500);
+  }
+
+  loadData();
+
   </script>
 </body>
 </html>
